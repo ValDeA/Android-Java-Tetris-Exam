@@ -1,0 +1,945 @@
+package com.example.valdea.tetris;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.DialogInterface;
+import android.content.Intent;
+import android.graphics.Color;
+import android.media.MediaPlayer;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Message;
+import android.view.View;
+import android.view.WindowManager;
+import android.widget.ImageButton;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import java.util.Random;
+
+public class play extends Activity {
+
+    // 위젯 변수 선언
+    ImageView[] preView = new ImageView[3];
+    LinearLayout[][] mainBlock = new LinearLayout[20][10];
+    ImageButton upBtn, downBtn, leftBtn, rightBtn, rotateBtn;
+    TextView scoreView;
+    MediaPlayer bgmPlayer;
+
+    // 변수 선언 및 초기화
+    int[] preNumber = new int[3];
+    int nowNumber = 0;
+    int blockX = 0, blockY = 0;
+    int type = 0;
+    int[][] field = new int[20][10];
+    int[][] ctlField = new int[20][10];
+
+    // 게임 관련 설정 변수
+    boolean difficult, gameover = false;
+    int score = 0, removeCount = 1;
+    int  timeInterval;
+    Handler handler;
+    String userID;
+
+    final int BLUE = Color.rgb(0,0,255);
+    final int RED = Color.rgb(255, 0, 0);
+    final int GREEN = Color.rgb(0, 255, 0);
+    final int YELLOW = Color.rgb(255, 255, 0);
+    final int PURPLE = Color.rgb(255, 0, 255);
+    final int PINK = Color.rgb(255, 90, 140);
+    final int BROWN = Color.rgb(135, 64, 64);
+    final int CLEAR = Color.rgb(255, 255, 255);
+
+    final int ROW = 20, COL = 10;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.playroom);
+
+        // 스레드로 초기화 작업
+        new Thread() {
+            public void run() {
+                // 필드 초기화
+                for(int i=0; i<ROW; i++) {
+                    for (int j = 0; j < COL; j++) {
+                        field[i][j] = 10;
+                        ctlField[i][j] = 0;
+                    }
+                }
+
+                // 위젯을 변수와 연결
+                preView[0] = (ImageView) findViewById(R.id.preview1);
+                preView[1] = (ImageView) findViewById(R.id.preview2);
+                preView[2] = (ImageView) findViewById(R.id.preview3);
+                upBtn = (ImageButton) findViewById(R.id.upBtn);
+                downBtn = (ImageButton) findViewById(R.id.downBtn);
+                leftBtn = (ImageButton) findViewById(R.id.leftBtn);
+                rightBtn = (ImageButton) findViewById(R.id.rightBtn);
+                rotateBtn = (ImageButton) findViewById(R.id.rotateBtn);
+                scoreView = (TextView) findViewById(R.id.scoreView);
+
+                mainMatch();
+                initBlock();
+
+                upBtn.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        quickDown();
+                    }
+                });
+                leftBtn.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        leftMove();
+                    }
+                });
+                rightBtn.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        rightMove();
+                    }
+                });
+                downBtn.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        downMove();
+                    }
+                });
+                rotateBtn.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        rotate();
+                    }
+                });
+
+                // 인텐트로 난이도 값 가져오기
+                Intent inputIntent = getIntent();
+                difficult = inputIntent.getBooleanExtra("Difficult", true);
+                timeInterval = inputIntent.getIntExtra("TimeInterval", 1000);
+                userID = inputIntent.getStringExtra("ID");
+            }
+        }.start();
+
+        // BGM Player
+        bgmPlayer = MediaPlayer.create(this, R.raw.bgm_tetris);
+        bgmPlayer.start();
+
+        // 타이머 설정
+        handler = new Handler() {
+            public void handleMessage(Message msg) {
+                super.handleMessage(msg);
+
+                new Thread() {
+                    public void run() {
+                        try {
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    downMove();
+                                }
+                            });
+                        } catch (NullPointerException e) {
+                            handler.removeMessages(0);
+                        }
+                    }
+                    }.start();
+                // timerInterval 간격으로 재실행
+                this.sendEmptyMessageDelayed(0, timeInterval);
+            }
+        };
+
+        // 게임 시작
+        giftBlock();
+        handler.sendEmptyMessage(0);
+    }
+    /* 게임 오버 메소드 */
+    public void gameOver() {
+        handler.removeMessages(0);
+        bgmPlayer.stop();
+
+        try {
+            AlertDialog.Builder dlg = new AlertDialog.Builder(play.this);
+            dlg.setTitle("Game Over!");
+            dlg.setMessage("당신의 기록은 " + score + "입니다.");
+            dlg.setNegativeButton("확인", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    Intent outIntent = new Intent(getApplicationContext(), Leaderboard.class);
+                    outIntent.putExtra("Score", score);
+                    outIntent.putExtra("NicName", userID);
+                    startActivity(outIntent);
+                    finish();
+                }
+            });
+            dlg.show();
+        } catch(WindowManager.BadTokenException e) { finish();
+        } catch (RuntimeException e) { }
+
+        upBtn.setVisibility(View.INVISIBLE);
+        downBtn.setVisibility(View.INVISIBLE);
+        leftBtn.setVisibility(View.INVISIBLE);
+        rightBtn.setVisibility(View.INVISIBLE);
+        rotateBtn.setVisibility(View.INVISIBLE);
+    }
+    /* 블록 삭제 메소드 */
+    public void removeBlock() {
+        boolean removeFlag = false;
+        for(int i=ROW-1; i>=0; i--) {
+            int removeCount = 0;
+            for(int j=0; j<COL; j++) {
+                // 고착화된 블록 카운팅
+                if(ctlField[i][j] == 2) removeCount++;
+            }
+
+            // 고착화된 블록 개수 = 열의 수
+            if(removeCount == COL) {
+                for(int j=0; j<COL; j++) {
+                    field[i][j] = 10;
+                    ctlField[i][j] = 0;
+                }
+                removeFlag = true;
+                flowBlock(i);
+                break;
+            }
+        }
+        if(removeFlag == true) removeBlock();
+    }
+    /* 삭제 후 쌓인 블록 내리기 */
+    public void flowBlock(int index) {
+        for(int i=index-1; i>=0; i--) {
+            for(int j=0; j<COL; j++) {
+                ctlField[i+1][j] = ctlField[i][j];
+                field[i+1][j] = field[i][j];
+            }
+        }
+
+        if(difficult) score = score + 1;
+        else score = score + 2;
+
+        if(timeInterval != 200) {
+            removeCount = removeCount + 1;
+
+            if (removeCount == 5) {
+                removeCount = 0;
+                timeInterval = timeInterval - 100;
+
+                handler.removeMessages(0);
+                handler.sendEmptyMessage(0);
+            }
+        } else if(timeInterval == 200) {
+            timeInterval = timeInterval - 50;
+
+            handler.removeMessages(0);
+            handler.sendEmptyMessage(0);
+        }
+        scoreView.setText("Score : " + score);
+    }
+    /* 블록 고착화 메소드 */
+    public void fixedBlock() {
+        for (int i=0; i<ROW; i++) {
+            for(int j=0; j<COL; j++) {
+                if(ctlField[i][j] == 1) {
+                    ctlField[i][j] = 2;
+                }
+            }
+        }
+
+        removeBlock();
+        giftBlock();
+    }
+    /* 랜덤 블록 생성 메소드 */
+    public int randomBlock() {
+        Random random = new Random();
+        return random.nextInt(7);
+    }
+    /* 최초 프리뷰 블록 초기화 메소드 */
+    public void initBlock() {
+        preNumber[0] = randomBlock();
+        preNumber[1] = randomBlock();
+        preNumber[2] = randomBlock();
+
+        preView[0].setImageResource(matchBlock(preNumber[0]));
+        preView[1].setImageResource(matchBlock(preNumber[1]));
+        preView[2].setImageResource(matchBlock(preNumber[2]));
+    }
+    /* 블록 매칭 메소드 */
+    public int matchBlock(int index) {
+        // 0은 네모, 1은 일자, 2는 ㅗ, 3은 번개, 4는 역번개, 5는 L, 6은 역L
+        if(index == 0) return R.drawable.blocks;
+        if(index == 1) return R.drawable.blocki;
+        if(index == 2) return R.drawable.blockh;
+        if(index == 3) return R.drawable.blockz;
+        if(index == 4) return R.drawable.reversez;
+        if(index == 5) return R.drawable.blockl;
+        if(index == 6) return R.drawable.reversel;
+        return 0;
+    }
+    /* 블록 넘기기 메소드 */
+    public void giftBlock() {
+        nowNumber = preNumber[0];
+        type = 0;
+        createBlock();
+        preNumber[0] = preNumber[1];
+        preView[0].setImageResource(matchBlock(preNumber[0]));
+        preNumber[1] = preNumber[2];
+        preView[1].setImageResource(matchBlock(preNumber[1]));
+        preNumber[2] = randomBlock();
+        preView[2].setImageResource(matchBlock(preNumber[2]));
+    }
+    /* Field 갱신 메소드 */
+    public void refreshField() {
+        for(int i=0; i<ROW; i++) {
+            for(int j=0; j<COL; j++) {
+                switch (field[i][j]) {
+                    case 0:
+                        mainBlock[i][j].setBackgroundColor(YELLOW);
+                        break;
+                    case 1:
+                        mainBlock[i][j].setBackgroundColor(RED);
+                        break;
+                    case 2:
+                        mainBlock[i][j].setBackgroundColor(PURPLE);
+                        break;
+                    case 3:
+                        mainBlock[i][j].setBackgroundColor(GREEN);
+                        break;
+                    case 4:
+                        mainBlock[i][j].setBackgroundColor(PINK);
+                        break;
+                    case 5:
+                        mainBlock[i][j].setBackgroundColor(BLUE);
+                        break;
+                    case 6:
+                        mainBlock[i][j].setBackgroundColor(BROWN);
+                        break;
+                    case 10:
+                        mainBlock[i][j].setBackgroundColor(CLEAR);
+                        break;
+                }
+            }
+        }
+    }
+    /* 메인 블록 생성 메소드 */
+    public void createBlock() {
+        if(ctlField[0][4] == 2 || ctlField[0][5] == 2 || ctlField[1][4] == 2 || ctlField[1][5] == 2) {
+            gameover = true;
+            gameOver();
+        }
+        else {
+            // 0은 네모, 1은 일자, 2는 ㅗ, 3은 번개, 4는 역번개, 5는 L, 6은 역L
+            switch (nowNumber) {
+                case 0:
+                    field[0][4] = 0;
+                    field[0][5] = 0;
+                    field[1][4] = 0;
+                    field[1][5] = 0;
+
+                    ctlField[0][4] = 1;
+                    ctlField[0][5] = 1;
+                    ctlField[1][4] = 1;
+                    ctlField[1][5] = 1;
+                    break;
+                case 1:
+                    field[0][4] = 1;
+                    field[1][4] = 1;
+                    field[2][4] = 1;
+                    field[3][4] = 1;
+
+                    ctlField[0][4] = 1;
+                    ctlField[1][4] = 1;
+                    ctlField[2][4] = 1;
+                    ctlField[3][4] = 1;
+
+                    blockX = 4;
+                    blockY = 2;
+                    break;
+                case 2:
+                    field[0][4] = 2;
+                    field[1][3] = 2;
+                    field[1][4] = 2;
+                    field[1][5] = 2;
+
+                    ctlField[0][4] = 1;
+                    ctlField[1][3] = 1;
+                    ctlField[1][4] = 1;
+                    ctlField[1][5] = 1;
+
+                    blockX = 4;
+                    blockY = 0;
+                    break;
+                case 3:
+                    field[0][4] = 3;
+                    field[0][3] = 3;
+                    field[1][4] = 3;
+                    field[1][5] = 3;
+
+                    ctlField[0][4] = 1;
+                    ctlField[0][3] = 1;
+                    ctlField[1][4] = 1;
+                    ctlField[1][5] = 1;
+
+                    blockX = 4;
+                    blockY = 0;
+                    break;
+                case 4:
+                    field[0][4] = 4;
+                    field[0][5] = 4;
+                    field[1][4] = 4;
+                    field[1][3] = 4;
+
+                    ctlField[0][4] = 1;
+                    ctlField[0][5] = 1;
+                    ctlField[1][4] = 1;
+                    ctlField[1][3] = 1;
+
+                    blockX = 4;
+                    blockY = 0;
+                    break;
+                case 5:
+                    field[0][4] = 5;
+                    field[1][4] = 5;
+                    field[2][4] = 5;
+                    field[2][5] = 5;
+
+                    ctlField[0][4] = 1;
+                    ctlField[1][4] = 1;
+                    ctlField[2][4] = 1;
+                    ctlField[2][5] = 1;
+
+                    blockX = 4;
+                    blockY = 2;
+                    break;
+                case 6:
+                    field[0][5] = 6;
+                    field[1][5] = 6;
+                    field[2][5] = 6;
+                    field[2][4] = 6;
+
+                    ctlField[0][5] = 1;
+                    ctlField[1][5] = 1;
+                    ctlField[2][5] = 1;
+                    ctlField[2][4] = 1;
+
+                    blockX = 5;
+                    blockY = 2;
+                    break;
+            }
+        }
+        refreshField();
+    }
+    /* 블록 컨트롤 메소드 */
+    public void rightMove() {
+        boolean flag = true;
+        /* 이동불가 조건 */
+        for(int i=0; i<ROW; i++) {
+            // 오른쪽 모서리에 닿았는가?
+            if(ctlField[i][9] == 1) flag = false;
+            for(int j=0; j<COL-1; j++) {
+                // 오른쪽에 블록이 있는가?
+                if (ctlField[i][j] == 1 && ctlField[i][j+1] == 2) flag = false;
+            }
+        }
+
+        // 오른쪽으로 이동
+        if(flag == true) {
+            for (int i = 0; i < ROW; i++) {
+                for (int j = COL-2; j>=0; j--) {
+                    if(ctlField[i][j] ==1) {
+                        field[i][j+1] = field[i][j];
+                        field[i][j] = 10;
+                        ctlField[i][j+1] = ctlField[i][j];
+                        ctlField[i][j] = 0;
+                    }
+                }
+            }
+        }
+
+        if(flag == true) blockX++;
+        refreshField();
+    }
+    public void leftMove() {
+        boolean flag = true;
+        /* 이동불가 조건 */
+        for(int i=0; i<ROW; i++) {
+            // 왼쪽 모서리에 닿았는가?
+            if(ctlField[i][0] == 1) flag = false;
+            for(int j=1; j<COL; j++) {
+                // 왼쪽에 블록이 있는가?
+                if (ctlField[i][j] == 1 && ctlField[i][j-1] == 2) flag = false;
+            }
+        }
+
+        // 왼쪽으로 이동
+        if(flag == true) {
+            for (int i = 0; i < ROW; i++) {
+                for (int j = 1; j<COL; j++) {
+                    if(ctlField[i][j] == 1) {
+                        field[i][j-1] = field[i][j];
+                        field[i][j] = 10;
+                        ctlField[i][j-1] = ctlField[i][j];
+                        ctlField[i][j] = 0;
+                    }
+                }
+            }
+        }
+
+        if(flag == true) blockX--;
+        refreshField();
+    }
+    public void downMove() {
+        boolean flag = true;
+        /* 이동불가 조건 */
+        for(int i=0; i<COL; i++) {
+            // 아래쪽 모서리에 닿았는가?
+            if(ctlField[ROW-1][i] == 1) {
+                flag = false;
+                fixedBlock();
+            }
+            else { // 아래에 블록이 있는가?
+                for(int j=0; j<ROW; j++) {
+                    if (ctlField[j][i] == 1 && ctlField[j+1][i] == 2) {
+                        flag = false;
+                        fixedBlock();
+                    }
+                }
+            }
+        }
+
+        // 아래로 이동
+        if(flag == true) {
+            for (int i = ROW-2; i >= 0; i--) {
+                for (int j = 0; j<COL; j++) {
+                    if(ctlField[i][j] == 1) {
+                        field[i+1][j] = field[i][j];
+                        field[i][j] = 10;
+                        ctlField[i+1][j] = ctlField[i][j];
+                        ctlField[i][j] = 0;
+                    }
+                }
+            }
+        }
+
+        if(flag == true) blockY++;
+        refreshField();
+    }
+    /* 퀵 다운 메소드 */
+    public void quickDown() {
+        boolean flag = true;
+        int cnt = 0;
+        int minCol = COL - 1, maxCol = 0;
+
+        for(int i=0; i<ROW; i++) {
+            for(int j=0; j<COL; j++) {
+                if(ctlField[i][j] == 1) {
+                    // 최소 열 및 최대 열 구하기
+                    if(minCol > j) minCol = j;
+                    if(maxCol < j) maxCol = j;
+                }
+            }
+        }
+        maxCol++;
+
+        while(flag) {
+            cnt = 0;
+
+            /* 이동 불가 조건 */
+            for(int i=0; i<ROW-1; i++)
+                for(int j=minCol; j<maxCol; j++)
+                    if(ctlField[i][j] == 1 && ctlField[i+1][j] == 2) flag = false;
+
+            if(flag == false) break;
+
+            for (int i = ROW-2; i >= 0; i--) {
+                if(flag == false) break;
+                for (int j = minCol; j<maxCol; j++) {
+                    if(ctlField[19][j] == 1 && cnt == 4) {
+                        flag = false;
+                        break;
+                    } else if(ctlField[i][j] == 1) {
+                        field[i+1][j] = field[i][j];
+                        field[i][j] = 10;
+                        ctlField[i+1][j] = ctlField[i][j];
+                        ctlField[i][j] = 0;
+
+                        cnt++;
+                    } else if(gameover) { flag = false; }
+                }
+            }
+        }
+
+        fixedBlock();
+        refreshField();
+    }
+    /* 블록 회전 메소드 */
+    public void rotate() {
+        // 0은 네모, 1은 일자, 2는 ㅗ, 3은 번개, 4는 역번개, 5는 L, 6은 역L
+        // 중심 블록 ctlField[blockY][blockX]
+        try {
+            switch (nowNumber) {
+                case 0:
+                    break;
+                case 1: // ( 4, 2 ) 일자
+                    if (type == 0) {
+                        if (ctlField[blockY][blockX - 2] == 0 && ctlField[blockY][blockX - 1] == 0 && ctlField[blockY][blockX + 1] == 0) {
+                            ctlField[blockY - 2][blockX] = 0;
+                            ctlField[blockY - 1][blockX] = 0;
+                            ctlField[blockY + 1][blockX] = 0;
+                            field[blockY - 2][blockX] = 10;
+                            field[blockY - 1][blockX] = 10;
+                            field[blockY + 1][blockX] = 10;
+
+                            ctlField[blockY][blockX - 2] = 1;
+                            ctlField[blockY][blockX - 1] = 1;
+                            ctlField[blockY][blockX + 1] = 1;
+                            field[blockY][blockX - 2] = 1;
+                            field[blockY][blockX - 1] = 1;
+                            field[blockY][blockX + 1] = 1;
+
+                            type++;
+                        }
+                    } else {
+                        if (ctlField[blockY - 2][blockX] == 0 && ctlField[blockY - 1][blockX] == 0 && ctlField[blockY + 1][blockX] == 0) {
+                            ctlField[blockY][blockX - 2] = 0;
+                            ctlField[blockY][blockX - 1] = 0;
+                            ctlField[blockY][blockX + 1] = 0;
+                            field[blockY][blockX - 2] = 10;
+                            field[blockY][blockX - 1] = 10;
+                            field[blockY][blockX + 1] = 10;
+
+                            ctlField[blockY - 2][blockX] = 1;
+                            ctlField[blockY - 1][blockX] = 1;
+                            ctlField[blockY + 1][blockX] = 1;
+                            field[blockY - 2][blockX] = 1;
+                            field[blockY - 1][blockX] = 1;
+                            field[blockY + 1][blockX] = 1;
+
+                            type--;
+                        }
+                    }
+                    break;
+                case 2: // ( 4, 0 ) ㅗ
+                    if (type == 0) {
+                        if (ctlField[blockY - 1][blockX - 1] == 0 && ctlField[blockY][blockX - 1] == 0) {
+                            ctlField[blockY + 1][blockX - 1] = 0;
+                            ctlField[blockY + 1][blockX] = 0;
+                            ctlField[blockY + 1][blockX + 1] = 0;
+                            field[blockY + 1][blockX - 1] = 10;
+                            field[blockY + 1][blockX] = 10;
+                            field[blockY + 1][blockX + 1] = 10;
+
+                            ctlField[blockY - 1][blockX - 1] = 1;
+                            ctlField[blockY][blockX - 1] = 1;
+                            ctlField[blockY + 1][blockX - 1] = 1;
+                            field[blockY - 1][blockX - 1] = 2;
+                            field[blockY][blockX - 1] = 2;
+                            field[blockY + 1][blockX - 1] = 2;
+
+                            type++;
+                        }
+                    } else if (type == 1) {
+                        if (ctlField[blockY - 1][blockX] == 0 && ctlField[blockY - 1][blockX + 1] == 0) {
+                            ctlField[blockY - 1][blockX - 1] = 0;
+                            ctlField[blockY][blockX - 1] = 0;
+                            ctlField[blockY + 1][blockX - 1] = 0;
+                            field[blockY - 1][blockX - 1] = 10;
+                            field[blockY][blockX - 1] = 10;
+                            field[blockY + 1][blockX - 1] = 10;
+
+                            ctlField[blockY - 1][blockX - 1] = 1;
+                            ctlField[blockY - 1][blockX] = 1;
+                            ctlField[blockY - 1][blockX + 1] = 1;
+                            field[blockY - 1][blockX - 1] = 2;
+                            field[blockY - 1][blockX] = 2;
+                            field[blockY - 1][blockX + 1] = 2;
+
+                            type++;
+                        }
+                    } else if (type == 2) {
+                        if (ctlField[blockY][blockX + 1] == 0 && ctlField[blockY + 1][blockX + 1] == 0) {
+                            ctlField[blockY - 1][blockX - 1] = 0;
+                            ctlField[blockY - 1][blockX] = 0;
+                            ctlField[blockY - 1][blockX + 1] = 0;
+                            field[blockY - 1][blockX - 1] = 10;
+                            field[blockY - 1][blockX] = 10;
+                            field[blockY - 1][blockX + 1] = 10;
+
+                            ctlField[blockY - 1][blockX + 1] = 1;
+                            ctlField[blockY][blockX + 1] = 1;
+                            ctlField[blockY + 1][blockX + 1] = 1;
+                            field[blockY - 1][blockX + 1] = 2;
+                            field[blockY][blockX + 1] = 2;
+                            field[blockY + 1][blockX + 1] = 2;
+
+                            type++;
+                        }
+                    } else if (type == 3) {
+                        if (ctlField[blockY + 1][blockX - 1] == 0 && ctlField[blockY + 1][blockX] == 0) {
+                            ctlField[blockY - 1][blockX + 1] = 0;
+                            ctlField[blockY][blockX + 1] = 0;
+                            ctlField[blockY + 1][blockX + 1] = 0;
+                            field[blockY - 1][blockX + 1] = 10;
+                            field[blockY][blockX + 1] = 10;
+                            field[blockY + 1][blockX + 1] = 10;
+
+                            ctlField[blockY + 1][blockX - 1] = 1;
+                            ctlField[blockY + 1][blockX] = 1;
+                            ctlField[blockY + 1][blockX + 1] = 1;
+                            field[blockY + 1][blockX - 1] = 2;
+                            field[blockY + 1][blockX] = 2;
+                            field[blockY + 1][blockX + 1] = 2;
+
+                            type = 0;
+                        }
+                    }
+                    break;
+                case 3: // ( 4, 0 ) 번개
+                    if (type == 0) {
+                        if (ctlField[blockY + 1][blockX - 1] == 0 && ctlField[blockY - 1][blockX] == 0) {
+                            ctlField[blockY + 1][blockX] = 0;
+                            ctlField[blockY + 1][blockX + 1] = 0;
+                            field[blockY + 1][blockX] = 10;
+                            field[blockY + 1][blockX + 1] = 10;
+
+                            ctlField[blockY - 1][blockX] = 1;
+                            ctlField[blockY + 1][blockX - 1] = 1;
+                            field[blockY - 1][blockX] = 3;
+                            field[blockY + 1][blockX - 1] = 3;
+
+                            type++;
+                        }
+                    } else {
+                        if (ctlField[blockY + 1][blockX] == 0 && ctlField[blockY + 1][blockX + 1] == 0) {
+                            ctlField[blockY - 1][blockX] = 0;
+                            ctlField[blockY + 1][blockX - 1] = 0;
+                            field[blockY - 1][blockX] = 10;
+                            field[blockY + 1][blockX - 1] = 10;
+
+                            ctlField[blockY + 1][blockX] = 1;
+                            ctlField[blockY + 1][blockX + 1] = 1;
+                            field[blockY + 1][blockX] = 3;
+                            field[blockY + 1][blockX + 1] = 3;
+
+                            type--;
+                        }
+                    }
+                    break;
+                case 4: // ( 4, 0 ) 역번개
+                    if (type == 0) {
+                        if (ctlField[blockY + 1][blockX + 1] == 0 && ctlField[blockY - 1][blockX] == 0) {
+                            ctlField[blockY + 1][blockX] = 0;
+                            ctlField[blockY + 1][blockX - 1] = 0;
+                            field[blockY + 1][blockX] = 10;
+                            field[blockY + 1][blockX - 1] = 10;
+
+                            ctlField[blockY - 1][blockX] = 1;
+                            ctlField[blockY + 1][blockX + 1] = 1;
+                            field[blockY - 1][blockX] = 4;
+                            field[blockY + 1][blockX + 1] = 4;
+
+                            type++;
+                        }
+                    } else {
+                        if (ctlField[blockY + 1][blockX] == 0 && ctlField[blockY + 1][blockX - 1] == 0) {
+                            ctlField[blockY - 1][blockX] = 0;
+                            ctlField[blockY + 1][blockX + 1] = 0;
+                            field[blockY - 1][blockX] = 10;
+                            field[blockY + 1][blockX + 1] = 10;
+
+                            ctlField[blockY + 1][blockX] = 1;
+                            ctlField[blockY + 1][blockX - 1] = 1;
+                            field[blockY + 1][blockX] = 4;
+                            field[blockY + 1][blockX - 1] = 4;
+
+                            type--;
+                        }
+                    }
+                    break;
+                case 5: // ( 4, 1 ) L
+                    if (type == 0) {
+                        if (ctlField[blockY + 1][blockX] == 0 && ctlField[blockY][blockX + 2] == 0) {
+                            ctlField[blockY - 1][blockX] = 0;
+                            ctlField[blockY - 2][blockX] = 0;
+                            field[blockY - 1][blockX] = 10;
+                            field[blockY - 2][blockX] = 10;
+
+                            ctlField[blockY + 1][blockX] = 1;
+                            ctlField[blockY][blockX + 2] = 1;
+                            field[blockY + 1][blockX] = 5;
+                            field[blockY][blockX + 2] = 5;
+
+                            type++;
+                        }
+                    } else if (type == 1) {
+                        if (ctlField[blockY][blockX - 1] == 0 && ctlField[blockY + 2][blockX] == 0) {
+                            ctlField[blockY][blockX + 1] = 0;
+                            ctlField[blockY][blockX + 2] = 0;
+                            field[blockY][blockX + 1] = 10;
+                            field[blockY][blockX + 2] = 10;
+
+                            ctlField[blockY + 2][blockX] = 1;
+                            ctlField[blockY][blockX - 1] = 1;
+                            field[blockY + 2][blockX] = 5;
+                            field[blockY][blockX - 1] = 5;
+
+                            type++;
+                        }
+                    } else if (type == 2) {
+                        if (ctlField[blockY][blockX - 2] == 0 && ctlField[blockY - 1][blockX] == 0) {
+                            ctlField[blockY + 1][blockX] = 0;
+                            ctlField[blockY + 2][blockX] = 0;
+                            field[blockY + 1][blockX] = 10;
+                            field[blockY + 2][blockX] = 10;
+
+                            ctlField[blockY][blockX - 2] = 1;
+                            ctlField[blockY - 1][blockX] = 1;
+                            field[blockY][blockX - 2] = 5;
+                            field[blockY - 1][blockX] = 5;
+
+                            type++;
+                        }
+                    } else if (type == 3) {
+                        if (ctlField[blockY - 2][blockX] == 0 && ctlField[blockY][blockX + 1] == 0) {
+                            ctlField[blockY][blockX - 2] = 0;
+                            ctlField[blockY][blockX - 1] = 0;
+                            field[blockY][blockX - 2] = 10;
+                            field[blockY][blockX - 1] = 10;
+
+                            ctlField[blockY - 2][blockX] = 1;
+                            ctlField[blockY][blockX + 1] = 1;
+                            field[blockY - 2][blockX] = 5;
+                            field[blockY][blockX + 1] = 5;
+
+                            type = 0;
+                        }
+                    }
+                    break;
+                case 6: // ( 5, 1 ) 역L
+                    if (type == 0) {
+                        if (ctlField[blockY][blockX + 2] == 0 && ctlField[blockY][blockX + 1] == 0) {
+                            ctlField[blockY][blockX - 1] = 0;
+                            ctlField[blockY - 2][blockX] = 0;
+                            field[blockY][blockX - 1] = 10;
+                            field[blockY - 2][blockX] = 10;
+
+                            ctlField[blockY][blockX + 1] = 1;
+                            ctlField[blockY][blockX + 2] = 1;
+                            field[blockY][blockX + 1] = 6;
+                            field[blockY][blockX + 2] = 6;
+
+                            type++;
+                        }
+                    } else if (type == 1) {
+                        if (ctlField[blockY + 1][blockX] == 0 && ctlField[blockY + 2][blockX] == 0) {
+                            ctlField[blockY - 1][blockX] = 0;
+                            ctlField[blockY][blockX + 2] = 0;
+                            field[blockY - 1][blockX] = 10;
+                            field[blockY][blockX + 2] = 10;
+
+                            ctlField[blockY + 1][blockX] = 1;
+                            ctlField[blockY + 2][blockX] = 1;
+                            field[blockY + 1][blockX] = 6;
+                            field[blockY + 2][blockX] = 6;
+
+                            type++;
+                        }
+                    } else if (type == 2) {
+                        if (ctlField[blockY][blockX - 1] == 0 && ctlField[blockY][blockX - 2] == 0) {
+                            ctlField[blockY + 2][blockX] = 0;
+                            ctlField[blockY][blockX + 1] = 0;
+                            field[blockY + 2][blockX] = 10;
+                            field[blockY][blockX + 1] = 10;
+
+                            ctlField[blockY][blockX - 1] = 1;
+                            ctlField[blockY][blockX - 2] = 1;
+                            field[blockY][blockX - 1] = 6;
+                            field[blockY][blockX - 2] = 6;
+
+                            type++;
+                        }
+                    } else if (type == 3) {
+                        if (ctlField[blockY - 1][blockX] == 0 && ctlField[blockY - 2][blockX] == 0) {
+                            ctlField[blockY + 1][blockX] = 0;
+                            ctlField[blockY][blockX - 2] = 0;
+                            field[blockY + 1][blockX] = 10;
+                            field[blockY][blockX - 2] = 10;
+
+                            ctlField[blockY - 1][blockX] = 1;
+                            ctlField[blockY - 2][blockX] = 1;
+                            field[blockY - 1][blockX] = 6;
+                            field[blockY - 2][blockX] = 6;
+
+                            type = 0;
+                        }
+                    }
+                    break;
+            }
+            refreshField();
+        } catch (ArrayIndexOutOfBoundsException arrBoundsError) {
+        } catch (NullPointerException nullPointError) { }
+    }
+    /* 메인 블록 위젯 연결 메소드 */
+    public void mainMatch() {
+        Integer[] aLine = { R.id.ato1, R.id.ato2, R.id.ato3, R.id.ato4, R.id.ato5, R.id.ato6, R.id.ato7, R.id.ato8, R.id.ato9, R.id.ato10 };
+        Integer[] bLine = { R.id.bto1, R.id.bto2, R.id.bto3, R.id.bto4, R.id.bto5, R.id.bto6, R.id.bto7, R.id.bto8, R.id.bto9, R.id.bto10 };
+        Integer[] cLine = { R.id.cto1, R.id.cto2, R.id.cto3, R.id.cto4, R.id.cto5, R.id.cto6, R.id.cto7, R.id.cto8, R.id.cto9, R.id.cto10 };
+        Integer[] dLine = { R.id.dto1, R.id.dto2, R.id.dto3, R.id.dto4, R.id.dto5, R.id.dto6, R.id.dto7, R.id.dto8, R.id.dto9, R.id.dto10 };
+        Integer[] eLine = { R.id.eto1, R.id.eto2, R.id.eto3, R.id.eto4, R.id.eto5, R.id.eto6, R.id.eto7, R.id.eto8, R.id.eto9, R.id.eto10 };
+        Integer[] fLine = { R.id.fto1, R.id.fto2, R.id.fto3, R.id.fto4, R.id.fto5, R.id.fto6, R.id.fto7, R.id.fto8, R.id.fto9, R.id.fto10 };
+        Integer[] gLine = { R.id.gto1, R.id.gto2, R.id.gto3, R.id.gto4, R.id.gto5, R.id.gto6, R.id.gto7, R.id.gto8, R.id.gto9, R.id.gto10 };
+        Integer[] hLine = { R.id.hto1, R.id.hto2, R.id.hto3, R.id.hto4, R.id.hto5, R.id.hto6, R.id.hto7, R.id.hto8, R.id.hto9, R.id.hto10 };
+        Integer[] iLine = { R.id.ito1, R.id.ito2, R.id.ito3, R.id.ito4, R.id.ito5, R.id.ito6, R.id.ito7, R.id.ito8, R.id.ito9, R.id.ito10 };
+        Integer[] jLine = { R.id.jto1, R.id.jto2, R.id.jto3, R.id.jto4, R.id.jto5, R.id.jto6, R.id.jto7, R.id.jto8, R.id.jto9, R.id.jto10 };
+        Integer[] kLine = { R.id.kto1, R.id.kto2, R.id.kto3, R.id.kto4, R.id.kto5, R.id.kto6, R.id.kto7, R.id.kto8, R.id.kto9, R.id.kto10 };
+        Integer[] lLine = { R.id.lto1, R.id.lto2, R.id.lto3, R.id.lto4, R.id.lto5, R.id.lto6, R.id.lto7, R.id.lto8, R.id.lto9, R.id.lto10 };
+        Integer[] mLine = { R.id.mto1, R.id.mto2, R.id.mto3, R.id.mto4, R.id.mto5, R.id.mto6, R.id.mto7, R.id.mto8, R.id.mto9, R.id.mto10 };
+        Integer[] nLine = { R.id.nto1, R.id.nto2, R.id.nto3, R.id.nto4, R.id.nto5, R.id.nto6, R.id.nto7, R.id.nto8, R.id.nto9, R.id.nto10 };
+        Integer[] oLine = { R.id.oto1, R.id.oto2, R.id.oto3, R.id.oto4, R.id.oto5, R.id.oto6, R.id.oto7, R.id.oto8, R.id.oto9, R.id.oto10 };
+        Integer[] pLine = { R.id.pto1, R.id.pto2, R.id.pto3, R.id.pto4, R.id.pto5, R.id.pto6, R.id.pto7, R.id.pto8, R.id.pto9, R.id.pto10 };
+        Integer[] qLine = { R.id.qto1, R.id.qto2, R.id.qto3, R.id.qto4, R.id.qto5, R.id.qto6, R.id.qto7, R.id.qto8, R.id.qto9, R.id.qto10 };
+        Integer[] rLine = { R.id.rto1, R.id.rto2, R.id.rto3, R.id.rto4, R.id.rto5, R.id.rto6, R.id.rto7, R.id.rto8, R.id.rto9, R.id.rto10 };
+        Integer[] sLine = { R.id.sto1, R.id.sto2, R.id.sto3, R.id.sto4, R.id.sto5, R.id.sto6, R.id.sto7, R.id.sto8, R.id.sto9, R.id.sto10 };
+        Integer[] tLine = { R.id.tto1, R.id.tto2, R.id.tto3, R.id.tto4, R.id.tto5, R.id.tto6, R.id.tto7, R.id.tto8, R.id.tto9, R.id.tto10 };
+
+        for(int i=0; i<aLine.length; i++)
+            mainBlock[0][i] = (LinearLayout) findViewById(aLine[i]);
+        for(int i=0; i<bLine.length; i++)
+            mainBlock[1][i] = (LinearLayout) findViewById(bLine[i]);
+        for(int i=0; i<cLine.length; i++)
+            mainBlock[2][i] = (LinearLayout) findViewById(cLine[i]);
+        for(int i=0; i<dLine.length; i++)
+            mainBlock[3][i] = (LinearLayout) findViewById(dLine[i]);
+        for(int i=0; i<eLine.length; i++)
+            mainBlock[4][i] = (LinearLayout) findViewById(eLine[i]);
+        for(int i=0; i<fLine.length; i++)
+            mainBlock[5][i] = (LinearLayout) findViewById(fLine[i]);
+        for(int i=0; i<gLine.length; i++)
+            mainBlock[6][i] = (LinearLayout) findViewById(gLine[i]);
+        for(int i=0; i<hLine.length; i++)
+            mainBlock[7][i] = (LinearLayout) findViewById(hLine[i]);
+        for(int i=0; i<iLine.length; i++)
+            mainBlock[8][i] = (LinearLayout) findViewById(iLine[i]);
+        for(int i=0; i<jLine.length; i++)
+            mainBlock[9][i] = (LinearLayout) findViewById(jLine[i]);
+        for(int i=0; i<kLine.length; i++)
+            mainBlock[10][i] = (LinearLayout) findViewById(kLine[i]);
+        for(int i=0; i<lLine.length; i++)
+            mainBlock[11][i] = (LinearLayout) findViewById(lLine[i]);
+        for(int i=0; i<mLine.length; i++)
+            mainBlock[12][i] = (LinearLayout) findViewById(mLine[i]);
+        for(int i=0; i<nLine.length; i++)
+            mainBlock[13][i] = (LinearLayout) findViewById(nLine[i]);
+        for(int i=0; i<oLine.length; i++)
+            mainBlock[14][i] = (LinearLayout) findViewById(oLine[i]);
+        for(int i=0; i<pLine.length; i++)
+            mainBlock[15][i] = (LinearLayout) findViewById(pLine[i]);
+        for(int i=0; i<qLine.length; i++)
+            mainBlock[16][i] = (LinearLayout) findViewById(qLine[i]);
+        for(int i=0; i<rLine.length; i++)
+            mainBlock[17][i] = (LinearLayout) findViewById(rLine[i]);
+        for(int i=0; i<sLine.length; i++)
+            mainBlock[18][i] = (LinearLayout) findViewById(sLine[i]);
+        for(int i=0; i<tLine.length; i++)
+            mainBlock[19][i] = (LinearLayout) findViewById(tLine[i]);
+        }
+}

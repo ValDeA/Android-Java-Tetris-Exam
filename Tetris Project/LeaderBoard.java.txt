@@ -1,0 +1,442 @@
+package com.example.valdea.tetris;
+
+import android.annotation.TargetApi;
+import android.app.AlertDialog;
+import android.app.FragmentManager;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteOpenHelper;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.IBinder;
+import android.support.annotation.Nullable;
+import android.support.v4.content.ContextCompat;
+import android.support.v7.app.AppCompatActivity;
+import android.view.Gravity;
+import android.view.InflateException;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.widget.Button;
+import android.widget.DatePicker;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.widget.Toast;
+import android.widget.ViewFlipper;
+
+import com.google.android.gms.maps.CameraUpdateFactory;
+import com.google.android.gms.maps.GoogleMap;
+import com.google.android.gms.maps.MapFragment;
+import com.google.android.gms.maps.OnMapReadyCallback;
+import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.MarkerOptions;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+
+
+public class Leaderboard extends AppCompatActivity implements OnMapReadyCallback {
+
+    // 데이터베이스 선언
+    RankBoard rankBoard;
+    SQLiteDatabase sqlDb;
+
+    // 위젯 변수 선언
+    TextView tvName, tvScore;
+    Button returnMain, searchDate, search;
+    DatePicker datePicker;
+    ViewFlipper vfBoard;
+
+    String date;
+
+    // 위도 경도 디폴트
+    double latitude = 37.56, longitude = 126.97;
+
+    @Override
+    protected void onCreate(@Nullable Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.leaderboard);
+
+        // 위젯 변수 매치
+        tvName = (TextView) findViewById(R.id.tvName);
+        tvScore = (TextView) findViewById(R.id.tvScore);
+        returnMain = (Button) findViewById(R.id.returnMain);
+        searchDate = (Button) findViewById(R.id.searchDate);
+        search = (Button) findViewById(R.id.search);
+        datePicker = (DatePicker) findViewById(R.id.datePicker);
+        vfBoard = (ViewFlipper) findViewById(R.id.vfBoard);
+
+        // DB 객체 생성
+        rankBoard = new RankBoard(this);
+
+        // 변수 선언
+        Intent scoreIntent = getIntent();
+        int score = scoreIntent.getIntExtra("Score", -1);
+        String name = scoreIntent.getStringExtra("NicName");
+
+        // GPS 객체 생성
+        GpsInfo gps = new GpsInfo(Leaderboard.this);
+        if (gps.isGetLocation()) {
+            latitude = gps.getLatitude();
+            longitude = gps.getLongitude();
+
+            Toast.makeText(getApplicationContext(),"당신의 위치 - \n위도: " + latitude + "\n경도: " + longitude,
+                    Toast.LENGTH_LONG).show();
+        }
+
+        // 현재 날짜 구하기
+        SimpleDateFormat mSimpleDateFormat = new SimpleDateFormat ( "yyyyMdd", Locale.KOREA );
+        Date currentTime = new Date ();
+        date = mSimpleDateFormat.format ( currentTime );
+
+        // DatePicker 설정
+        datePicker.setOnDateChangedListener(new DatePicker.OnDateChangedListener() {
+            @Override
+            public void onDateChanged(DatePicker view, int year, int monthOfYear, int dayOfMonth) {
+                date = String.valueOf(year);
+                date += String.valueOf(monthOfYear+1);
+                date += String.valueOf(dayOfMonth);
+
+                System.out.println(date);
+            }
+        });
+
+        // DB 쓰기
+        if (score != -1) {
+            sqlDb = rankBoard.getWritableDatabase();
+            sqlDb.execSQL("INSERT INTO rank VALUES( '" + score + "', '" + name + "', '" + latitude + "', '" + longitude + "', '" + date + "');");
+            sqlDb.close();
+        }
+
+        refreshDisplay();
+
+        // 돌아가기 버튼 클릭
+        returnMain.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                finish();
+            }
+        });
+
+        // 날짜 조회 버튼 클릭
+        searchDate.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                vfBoard.showNext();
+            }
+        });
+
+        // 조회 버튼 클릭
+        search.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                vfBoard.showPrevious();
+
+                LinearLayout searchll = new LinearLayout(Leaderboard.this);
+                TextView searchScroe = new TextView(Leaderboard.this);
+                TextView searchName = new TextView(Leaderboard.this);
+
+                searchll.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+                searchScroe.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+                searchName.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+                searchll.setOrientation(LinearLayout.HORIZONTAL);
+
+                searchll.setGravity(Gravity.CENTER);
+                searchScroe.setGravity(Gravity.CENTER);
+                searchName.setGravity(Gravity.CENTER);
+
+                AlertDialog.Builder dlg = new AlertDialog.Builder(Leaderboard.this);
+                dlg.setTitle("조회 결과");
+                dlg.setView(searchll);
+                dlg.setNegativeButton("확인", null);
+
+                searchll.addView(searchName);
+                searchll.addView(searchScroe);
+
+                sqlDb = rankBoard.getReadableDatabase();
+                Cursor cs = sqlDb.rawQuery("SELECT Score, Name FROM rank WHERE Date='" + date + "';", null);
+
+                String strScore = "점수" + "\r\n" + "----------" + "\r\n";
+                String strName = "이름" + "\r\n" + "----------" + "\r\n";
+
+                while (cs.moveToNext()) {
+                    strScore += cs.getString(0) + "\r\n";
+                    strName += cs.getString(1) + "\r\n";
+                }
+
+                searchScroe.setText(strScore);
+                searchName.setText(strName);
+
+                cs.close();
+                sqlDb.close();
+
+                dlg.show();
+            }
+        });
+    }
+
+    // 구글 맵이 준비 되었을 때, 마커 달기
+    @Override
+    public void onMapReady(GoogleMap googleMap) {
+        sqlDb = rankBoard.getReadableDatabase();
+        Cursor cs = sqlDb.rawQuery("SELECT Latitude, Longitude FROM rank ORDER BY Score DESC LIMIT 3;", null);
+        MarkerOptions markerOptions = new MarkerOptions();
+
+        LatLng[] latlng = new LatLng[3];
+        int cnt = 0;
+
+        while (cs.moveToNext()) {
+            latlng[cnt] = new LatLng(cs.getDouble(0), cs.getDouble(1));
+
+            markerOptions.position(latlng[cnt]);
+            markerOptions.title(cnt + 1 + "등");
+            markerOptions.snippet(cnt + 1 + "등한 장소");
+            googleMap.addMarker(markerOptions);
+
+            cnt++;
+        }
+
+        googleMap.moveCamera(CameraUpdateFactory.newLatLng(latlng[0]));
+        googleMap.animateCamera(CameraUpdateFactory.zoomTo(15));
+    }
+
+    // 메뉴 선택 처리
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        switch (item.getItemId()) {
+            case 1:
+                try {
+                    View dlgView = (View) View.inflate(Leaderboard.this, R.layout.map, null);
+                    AlertDialog.Builder dlg = new AlertDialog.Builder(Leaderboard.this);
+                    dlg.setTitle("기록을 갱신한 장소!");
+                    dlg.setView(dlgView);
+                    dlg.setNegativeButton("닫기", null);
+
+                    //구글 맵 Handler
+                    FragmentManager fragmentManager = getFragmentManager();
+                    MapFragment mapFragment = (MapFragment) fragmentManager.findFragmentById(R.id.map);
+                    mapFragment.getMapAsync(this);
+
+                    dlg.show();
+                } catch (InflateException e) {
+                } catch (NullPointerException e) {
+                    AlertDialog.Builder dlg = new AlertDialog.Builder(Leaderboard.this);
+                    dlg.setTitle("먼저 기록을 세워주세요!");
+                    dlg.setNegativeButton("닫기", null);
+                }
+
+                return true;
+            case 2:
+                sqlDb = rankBoard.getWritableDatabase();
+                rankBoard.onUpgrade(sqlDb, 1, 2);
+                sqlDb.close();
+
+                refreshDisplay();
+                return true;
+        }
+
+
+        return false;
+    }
+
+    // 옵션메뉴 만들기
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        menu.add(0, 1, 0, "지도로 보기");
+        menu.add(0, 2, 0, "기록 초기화");
+
+        return true;
+    }
+
+    /* DB 불러오는 메소드 */
+    public void refreshDisplay() {
+        sqlDb = rankBoard.getReadableDatabase();
+        Cursor cs = sqlDb.rawQuery("SELECT Score, Name FROM rank ORDER BY Score DESC LIMIT 10;", null);
+
+        String strScore = "점수" + "\r\n" + "----------" + "\r\n";
+        String strName = "이름" + "\r\n" + "----------" + "\r\n";
+
+        while (cs.moveToNext()) {
+            strScore += cs.getString(0) + "\r\n";
+            strName += cs.getString(1) + "\r\n";
+        }
+
+        tvScore.setText(strScore);
+        tvName.setText(strName);
+
+        cs.close();
+        sqlDb.close();
+    }
+
+    /* DataBase 메소드 */
+    public class RankBoard extends SQLiteOpenHelper {
+        public RankBoard(Context context) {
+            super(context, "rankDB", null, 1);
+        }
+
+        @Override
+        public void onCreate(SQLiteDatabase db) {
+            db.execSQL("CREATE TABLE rank ( Score INTEGER, Name CHAR(20), Latitude DOUBLE, Longitude DOUBLE, Date CHAR(10));");
+        }
+
+        @Override
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            db.execSQL("DROP TABLE IF EXISTS rank");
+            onCreate(db);
+        }
+    }
+
+    /* GPS 값 받아오는 메소드 */
+    public class GpsInfo extends Service implements LocationListener {
+
+        private final Context mContext;
+
+        // 현재 GPS 사용유무
+        boolean isGPSEnabled = false;
+        // 네트워크 사용유무
+        boolean isNetworkEnabled = false;
+        // GPS 상태값
+        boolean isGetLocation = false;
+
+        Location location;
+        double lat; // 위도
+        double lon; // 경도
+
+        // 최소 GPS 정보 업데이트 거리 10미터
+        private static final long MIN_DISTANCE_CHANGE_FOR_UPDATES = 10;
+
+        // 최소 GPS 정보 업데이트 시간 밀리세컨이므로 1분
+        private static final long MIN_TIME_BW_UPDATES = 1000 * 60 * 1;
+
+        protected LocationManager locationManager;
+
+        public GpsInfo(Context context) {
+            this.mContext = context;
+            getLocation();
+        }
+
+        @TargetApi(23)
+        public Location getLocation() {
+            if (Build.VERSION.SDK_INT >= 23 &&
+                    ContextCompat.checkSelfPermission(
+                            mContext, android.Manifest.permission.ACCESS_FINE_LOCATION)
+                            != PackageManager.PERMISSION_GRANTED &&
+                    ContextCompat.checkSelfPermission(
+                            mContext, android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                            != PackageManager.PERMISSION_GRANTED) {
+
+                return null;
+            }
+            try {
+                locationManager = (LocationManager) mContext
+                        .getSystemService(LOCATION_SERVICE);
+
+                // GPS 정보 가져오기
+                isGPSEnabled = locationManager
+                        .isProviderEnabled(LocationManager.GPS_PROVIDER);
+
+                // 현재 네트워크 상태 값 알아오기
+                isNetworkEnabled = locationManager
+                        .isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+
+                if (!isGPSEnabled && !isNetworkEnabled) {
+                    // GPS 와 네트워크사용이 가능하지 않을때 소스 구현
+                } else {
+                    this.isGetLocation = true;
+                    // 네트워크 정보로 부터 위치값 가져오기
+                    if (isNetworkEnabled) {
+                        locationManager.requestLocationUpdates(
+                                LocationManager.NETWORK_PROVIDER,
+                                MIN_TIME_BW_UPDATES,
+                                MIN_DISTANCE_CHANGE_FOR_UPDATES, this);
+
+                        if (locationManager != null) {
+                            location = locationManager
+                                    .getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                            if (location != null) {
+                                // 위도 경도 저장
+                                lat = location.getLatitude();
+                                lon = location.getLongitude();
+                            }
+                        }
+                    }
+
+                    if (isGPSEnabled) {
+                        if (location == null) {
+                            locationManager.requestLocationUpdates(
+                                    LocationManager.GPS_PROVIDER,
+                                    MIN_TIME_BW_UPDATES,
+                                    MIN_DISTANCE_CHANGE_FOR_UPDATES, this);
+                            if (locationManager != null) {
+                                location = locationManager
+                                        .getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                                if (location != null) {
+                                    lat = location.getLatitude();
+                                    lon = location.getLongitude();
+                                }
+                            }
+                        }
+                    }
+                }
+
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            return location;
+        }
+
+        /**
+         * GPS 종료
+         **/
+        public void stopUsingGPS() {
+            if (locationManager != null) {
+                locationManager.removeUpdates(GpsInfo.this);
+            }
+        }
+
+        /**
+         * 위도값을 가져옵니다.
+         **/
+        public double getLatitude() {
+            if (location != null) {
+                lat = location.getLatitude();
+            }
+            return lat;
+        }
+
+        /**
+         * 경도값을 가져옵니다.
+         **/
+        public double getLongitude() {
+            if (location != null) {
+                lon = location.getLongitude();
+            }
+            return lon;
+        }
+
+        /**
+         * GPS 나 wifi 정보가 켜져있는지 확인합니다.
+         **/
+        public boolean isGetLocation() {
+            return this.isGetLocation;
+        }
+
+        @Override
+        public IBinder onBind(Intent arg0) {
+            return null;
+        }
+        public void onLocationChanged(Location location) { }
+        public void onStatusChanged(String provider, int status, Bundle extras) { }
+        public void onProviderEnabled(String provider) { }
+        public void onProviderDisabled(String provider) {}
+    }
+}

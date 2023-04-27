@@ -1,0 +1,266 @@
+package com.example.valdea.tetris;
+
+import android.app.ActivityManager;
+import android.app.AlertDialog;
+import android.app.TabActivity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.Bundle;
+import android.util.Log;
+import android.view.View;
+import android.widget.Button;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.RatingBar;
+import android.widget.TabHost;
+import android.widget.ViewFlipper;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+
+public class MainActivity extends TabActivity {
+
+    // 위젯 변수 선언
+    Button start, board, end;
+    Button back1, back2, go1, go2;
+    LinearLayout mainLayout;
+    TabHost tabHost;
+    TabHost.TabSpec nMode, hMode;
+    ViewFlipper vf;
+    RatingBar tokenRating;
+
+    Intent intentPlayroom, tokenService;
+
+    // 토큰 관련 변수
+    int tokenFromService = -1;
+
+    // 사용자 정보 변수
+    String userID = null;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        setTitle("Tetris");
+
+        Intent intentLogin = getIntent();
+        userID = intentLogin.getStringExtra("Login");
+
+        if(userID == null) {
+            Intent loginIntent = new Intent(getApplicationContext(), User.class);
+            startActivity(loginIntent);
+            finish();
+        }
+
+        // 인텐트 선언
+        intentPlayroom = new Intent(getApplicationContext(), play.class);
+        tokenService = new Intent(getApplicationContext(), TokenService.class);
+
+        // 위젯을 변수에 연결
+        mainLayout = (LinearLayout) findViewById(R.id.mainLayout);
+        vf = (ViewFlipper) findViewById(R.id.vf);
+        back1 = (Button) findViewById(R.id.back1);
+        back2 = (Button) findViewById(R.id.back2);
+        go1 = (Button) findViewById(R.id.go1);
+        go2 = (Button) findViewById(R.id.go2);
+        start = (Button) findViewById(R.id.start);
+        board = (Button) findViewById(R.id.board);
+        end = (Button) findViewById(R.id.quit);
+        tokenRating = (RatingBar) findViewById(R.id.tokenRating);
+        ImageView iv = (ImageView) findViewById(R.id.imageView);
+
+        // TabHost 선언
+        tabHost = getTabHost();
+
+        // 탭 메뉴 활성화
+        nMode = tabHost.newTabSpec("Normal").setIndicator("Normal Mode");
+        nMode.setContent(R.id.nmode);
+        tabHost.addTab(nMode);
+
+        hMode = tabHost.newTabSpec("Hard").setIndicator("Hard Mode");
+        hMode.setContent(R.id.hmode);
+        tabHost.addTab(hMode);
+
+        tabHost.setCurrentTab(0);
+
+        // 서비스 시작
+        tokenRating.setMax(5);
+
+        starInput();
+        if(tokenFromService == -1) {
+            starOutput();
+        }
+
+        if(isMyServiceRunning(TokenService.class) == false) {
+            final Intent tokenService = new Intent(getApplicationContext(), TokenService.class);
+            startService(tokenService);
+        }
+
+        // Start 버튼을 눌렀을 때
+        start.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                vf.showNext();
+            }
+        });
+
+        // Quit 버튼을 눌렀을 때
+        end.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                //Log.w("Token Service", "Token Exit");
+                //stopService(tokenService);
+
+                finish();
+            }
+        });
+
+        // 이전 버튼 눌렀을 때
+        back1.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                backBtn();
+            }
+        });
+        back2.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                backBtn();
+            }
+        });
+
+        // 시작 버튼 눌렀을 때
+        go1.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                // 난이도 설정 값 인텐트로 보내기
+                intentPlayroom.putExtra("Difficult", true);
+                intentPlayroom.putExtra("timeInterval", 1000);
+                intentPlayroom.putExtra("ID", userID);
+
+                if(tokenFromService != 0) {
+                    tokenFromService--;
+                    ratingSetup(tokenFromService);
+                    starOutput();
+                    goBtn();
+                } else { tokenNeed(); backBtn(); }
+            }
+        });
+        go2.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                // 난이도 설정 값 인텐트로 보내기
+                intentPlayroom.putExtra("Difficult", false);
+                intentPlayroom.putExtra("TimeInterval", 500);
+                intentPlayroom.putExtra("ID", userID);
+
+                if(tokenFromService != 0) {
+                    tokenFromService--;
+                    ratingSetup(tokenFromService);
+                    starOutput();
+                    goBtn();
+                } else { tokenNeed(); backBtn(); }
+            }
+        });
+
+        // Board 버튼 눌렀을 때
+        board.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Intent boardIntent = new Intent(getApplicationContext(), Leaderboard.class);
+                startActivity(boardIntent);
+            }
+        });
+
+        iv.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                Log.w("Token Service", "Stopped Service");
+                stopService(tokenService);
+
+                return true;
+            }
+        });
+    }
+
+    private void starInput() {
+        FileInputStream inFs;
+        String str = null;
+        try {
+            inFs = openFileInput("Star.txt");
+            byte[] txt = new byte[500];
+            inFs.read(txt);
+            inFs.close();
+            str = (new String(txt)).trim();
+
+            tokenFromService = Integer.valueOf(str);
+            ratingSetup(tokenFromService);
+        } catch (IOException e) { }
+    }
+    private void starOutput() {
+        FileOutputStream outFs;
+        try {
+            outFs = openFileOutput("Star.txt", Context.MODE_PRIVATE);
+            outFs.write(String.valueOf(tokenFromService).getBytes());
+            outFs.close();
+        } catch (IOException e) { }
+    }
+
+    protected void ratingSetup(int token) {
+        tokenRating.setRating(token);
+    }
+    private void tokenNeed() {
+        AlertDialog.Builder dlg = new AlertDialog.Builder(MainActivity.this);
+        dlg.setTitle("스타가 부족합니다!");
+        dlg.setNegativeButton("확인", null);
+        dlg.show();
+    }
+
+    // BroadCast Receive
+    BroadcastReceiver br = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String actions = intent.getAction();
+
+            if(actions.equals("Token")) {
+                tokenFromService = intent.getIntExtra("TokenValue", 0);
+                ratingSetup(tokenFromService);
+            }
+        }
+    };
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        IntentFilter iFilter = new IntentFilter();
+        iFilter.addAction("Token");
+        registerReceiver(br, iFilter);
+    }
+    @Override
+    protected void onPause() {
+        super.onPause();
+    }
+
+    public void backBtn() {
+        vf.showPrevious();
+        tabHost.setCurrentTab(0);
+    }
+    public void goBtn() {
+        // playroom 액티비티 불러오기
+        backBtn();
+        startActivity(intentPlayroom);
+    }
+
+    /* 서비스 실행 여부 체크 */
+    private boolean isMyServiceRunning(Class<?> serviceClass) {
+        ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        for (ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
+            if (serviceClass.getName().equals(service.service.getClassName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
